@@ -3,25 +3,11 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, Reorder, AnimatePresence } from "framer-motion";
 import { 
-  Plus, 
-  StickyNote, 
-  CheckCircle2, 
-  ShoppingCart, 
-  Bell, 
-  PawPrint,
-  Clock,
-  ArrowLeft,
-  PenLine,
-  Calendar,
-  Waves,
-  Scissors,
-  Utensils,
-  Scale,
-  GripVertical,
-  Heart,
-  X
+  Plus, StickyNote, CheckCircle2, PawPrint, Clock, ArrowLeft, PenLine, 
+  Calendar, Waves, Scissors, Utensils, Scale, GripVertical, Heart, X 
 } from "lucide-react";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 export default function BoardPage() {
   const [mounted, setMounted] = useState(false);
@@ -32,89 +18,144 @@ export default function BoardPage() {
   const birthday = new Date("2024-08-22");
   const [daysWithUs, setDaysWithUs] = useState(0);
 
-  // 状态管理
-  const [todayTasks, setTodayTasks] = useState([
-    { id: "t1", text: "重构 TablePig 的 UI 界面", completed: false },
-    { id: "t2", text: "买晚餐的食材", completed: true },
-  ]);
-  const [newTodayTask, setNewTodayTask] = useState("");
-
-  const [weeklyTasks, setWeeklyTasks] = useState([
-    { id: "w1", text: "宠物店修毛 (长毛护理)", day: "周三", completed: false },
-    { id: "w2", text: "给小家网站加个 AI", day: "周五", completed: false },
-  ]);
-  const [newWeeklyTask, setNewWeeklyTask] = useState("");
-
-  const [notes, setNotes] = useState([
-    { id: 1, text: "周末想去公园野餐，带上腊肠专用垫！" },
-    { id: 2, text: "新设计的配色可以用这种鼠尾草绿。" }
-  ]);
-  const [newNote, setNewNote] = useState("");
-
+  // --- 数据状态 ---
+  const [todayTasks, setTodayTasks] = useState<any[]>([]);
+  const [weeklyTasks, setWeeklyTasks] = useState<any[]>([]);
+  const [notes, setNotes] = useState<any[]>([]);
   const [mochaData, setMochaData] = useState({
-    lastNails: "2026-03-01",
-    lastBath: "2026-03-05",
+    last_nails: "2026-03-01",
+    last_bath: "2026-03-05",
     weight: 5.2,
-    breakfast: { type: "鲜食", grams: 120 },
-    dinner: { type: "狗粮", grams: 0 }
+    breakfast_grams: 120,
+    dinner_grams: 0
   });
 
+  const [newTodayTask, setNewTodayTask] = useState("");
+  const [newWeeklyTask, setNewWeeklyTask] = useState("");
+  const [newNote, setNewNote] = useState("");
+
+  // --- 初始化加载 ---
   useEffect(() => {
     setMounted(true);
     const timer = setInterval(() => setTime(new Date()), 1000);
     const diff = Math.floor((new Date().getTime() - birthday.getTime()) / (1000 * 60 * 60 * 24));
     setDaysWithUs(diff);
-    return () => clearInterval(timer);
+
+    fetchData();
+
+    // 开启实时监听
+    const channel = supabase.channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
+        console.log('Change received!', payload);
+        fetchData(); 
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  const fetchData = async () => {
+    try {
+      const [today, weekly, ns, mocha] = await Promise.all([
+        supabase.from('today_tasks').select('*').order('created_at', { ascending: false }),
+        supabase.from('weekly_tasks').select('*').order('created_at', { ascending: false }),
+        supabase.from('notes').select('*').order('created_at', { ascending: false }),
+        supabase.from('mocha_status').select('*').eq('id', 1).single()
+      ]);
+
+      if (today.data) setTodayTasks(today.data);
+      if (weekly.data) setWeeklyTasks(weekly.data);
+      if (ns.data) setNotes(ns.data);
+      if (mocha.data) setMochaData(mocha.data);
+    } catch (err) {
+      console.error("Fetch error:", err);
+    }
+  };
 
   if (!mounted) return <main className="min-h-screen bg-paper" />;
 
-  const handleAddTodayTask = (e: any) => {
+  // --- 任务操作 ---
+  const handleAddTodayTask = async (e: any) => {
     if (e.key === "Enter" && newTodayTask.trim()) {
-      setTodayTasks([{ id: `t-${Date.now()}`, text: newTodayTask, completed: false }, ...todayTasks]);
+      const { data, error } = await supabase.from('today_tasks').insert([{ text: newTodayTask, completed: false }]).select();
+      if (error) console.error("Insert error:", error);
+      if (data) setTodayTasks([data[0], ...todayTasks]);
       setNewTodayTask("");
     }
   };
 
-  const handleAddWeeklyTask = (e: any) => {
+  const toggleTodayTask = async (task: any) => {
+    const updated = { ...task, completed: !task.completed };
+    setTodayTasks(todayTasks.map(t => t.id === task.id ? updated : t));
+    await supabase.from('today_tasks').update({ completed: updated.completed }).eq('id', task.id);
+  };
+
+  const deleteTodayTask = async (id: string) => {
+    setTodayTasks(todayTasks.filter(t => t.id !== id));
+    await supabase.from('today_tasks').delete().eq('id', id);
+  };
+
+  const handleAddWeeklyTask = async (e: any) => {
     if (e.key === "Enter" && newWeeklyTask.trim()) {
-      setWeeklyTasks([{ id: `w-${Date.now()}`, text: newWeeklyTask, day: "待定", completed: false }, ...weeklyTasks]);
+      const { data, error } = await supabase.from('weekly_tasks').insert([{ text: newWeeklyTask, day: '待定', completed: false }]).select();
+      if (error) console.error("Insert error:", error);
+      if (data) setWeeklyTasks([data[0], ...weeklyTasks]);
       setNewWeeklyTask("");
     }
   };
 
-  const deleteTodayTask = (id: string) => setTodayTasks(todayTasks.filter(t => t.id !== id));
-  const deleteWeeklyTask = (id: string) => setWeeklyTasks(weeklyTasks.filter(t => t.id !== id));
+  const toggleWeeklyTask = async (task: any) => {
+    const updated = { ...task, completed: !task.completed };
+    setWeeklyTasks(weeklyTasks.map(t => t.id === task.id ? updated : t));
+    await supabase.from('weekly_tasks').update({ completed: updated.completed }).eq('id', task.id);
+  };
 
-  const handleAddNote = (e: any) => {
+  const deleteWeeklyTask = async (id: string) => {
+    setWeeklyTasks(weeklyTasks.filter(t => t.id !== id));
+    await supabase.from('weekly_tasks').delete().eq('id', id);
+  };
+
+  const updateWeeklyDay = async (id: string, newDay: string) => {
+    setWeeklyTasks(weeklyTasks.map(t => t.id === id ? { ...t, day: newDay } : t));
+    await supabase.from('weekly_tasks').update({ day: newDay }).eq('id', id);
+  };
+
+  const moveToWeekly = async (task: any) => {
+    setTodayTasks(todayTasks.filter(t => t.id !== task.id));
+    await supabase.from('today_tasks').delete().eq('id', task.id);
+    await supabase.from('weekly_tasks').insert([{ text: task.text, day: '待定', completed: task.completed }]);
+    fetchData();
+  };
+
+  const moveToToday = async (task: any) => {
+    setWeeklyTasks(weeklyTasks.filter(t => t.id !== task.id));
+    await supabase.from('weekly_tasks').delete().eq('id', task.id);
+    await supabase.from('today_tasks').insert([{ text: task.text, completed: task.completed }]);
+    fetchData();
+  };
+
+  const handleAddNote = async (e: any) => {
     if (e.key === "Enter" && newNote.trim()) {
-      setNotes([{ id: Date.now(), text: newNote }, ...notes]);
+      const { data, error } = await supabase.from('notes').insert([{ text: newNote }]).select();
+      if (error) console.error("Insert error:", error);
+      if (data) setNotes([data[0], ...notes]);
       setNewNote("");
     }
   };
 
-  const deleteNote = (id: number) => setNotes(notes.filter(note => note.id !== id));
-  
-  const toggleTask = (id: string, isToday: boolean) => {
-    if (isToday) {
-      setTodayTasks(todayTasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-    } else {
-      setWeeklyTasks(weeklyTasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-    }
+  const deleteNote = async (id: string) => {
+    setNotes(notes.filter(n => n.id !== id));
+    await supabase.from('notes').delete().eq('id', id);
   };
 
-  const updateWeeklyDay = (id: string, newDay: string) => {
-    setWeeklyTasks(weeklyTasks.map(t => t.id === id ? { ...t, day: newDay } : t));
-  };
-
-  const moveToWeekly = (task: any) => {
-    setTodayTasks(todayTasks.filter(t => t.id !== task.id));
-    setWeeklyTasks([{ ...task, day: "待定" }, ...weeklyTasks]);
-  };
-
-  const moveToToday = (task: any) => {
-    setWeeklyTasks(weeklyTasks.filter(t => t.id !== task.id));
-    setTodayTasks([{ ...task }, ...todayTasks]);
+  const updateMocha = async (newData: any) => {
+    const updated = { ...mochaData, ...newData };
+    setMochaData(updated);
+    const { error } = await supabase.from('mocha_status').update(updated).eq('id', 1);
+    if (error) console.error("Update error:", error);
   };
 
   const getDaysAgo = (dateStr: string) => {
@@ -133,15 +174,9 @@ export default function BoardPage() {
       <header className="max-w-7xl mx-auto flex justify-between items-start mb-12">
         <div className="flex items-center gap-4 mt-4">
           <Link href="/" className="flex items-center gap-2 text-pencil opacity-70 hover:opacity-100 font-bold transition-all">
-            <ArrowLeft className="w-5 h-5" />
-            <span>回到首页</span>
+            <ArrowLeft className="w-5 h-5" /><span>回到首页</span>
           </Link>
-          <motion.div 
-            whileHover={{ y: -10, rotate: 10 }}
-            className="cursor-help opacity-20 hover:opacity-100 transition-opacity"
-          >
-            <PawPrint className="w-5 h-5 text-soft-pink" />
-          </motion.div>
+          <motion.div whileHover={{ y: -10, rotate: 10 }} className="cursor-help opacity-20 hover:opacity-100 transition-opacity"><PawPrint className="w-5 h-5 text-soft-pink" /></motion.div>
         </div>
         <motion.div animate={{ rotate: [-1, 1, -1] }} transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }} className="bg-white px-6 py-3 hand-drawn-border hand-drawn-shadow flex flex-col items-center relative">
           <div className="tape bg-soft-pink/30 scale-75" />
@@ -151,7 +186,6 @@ export default function BoardPage() {
       </header>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10 items-start">
-        {/* 今日重点 */}
         <div className="md:col-span-2">
           <BoardNote color="bg-note-yellow" rotation="rotate-[-0.5deg]" tapeColor="bg-soft-pink/40">
             <h2 className="text-3xl font-black mb-6 flex items-center gap-3 border-b-3 border-pencil/20 pb-3 text-pencil"><CheckCircle2 className="w-8 h-8" />今日重点</h2>
@@ -160,15 +194,14 @@ export default function BoardPage() {
             </div>
             <Reorder.Group axis="y" values={todayTasks} onReorder={setTodayTasks} className="space-y-4">
               <AnimatePresence>{todayTasks.map((task) => (
-                <Reorder.Item key={task.id} value={task} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="cursor-grab active:cursor-grabbing">
-                  <TodoItem task={task.text} completed={task.completed} onToggle={() => toggleTask(task.id, true)} onDelete={() => deleteTodayTask(task.id)} onMove={() => moveToWeekly(task)} moveLabel="去本周" large />
+                <Reorder.Item key={task.id} value={task} className="cursor-grab active:cursor-grabbing">
+                  <TodoItem task={task.text} completed={task.completed} onToggle={() => toggleTodayTask(task)} onDelete={() => deleteTodayTask(task.id)} onMove={() => moveToWeekly(task)} moveLabel="去本周" large />
                 </Reorder.Item>
               ))}</AnimatePresence>
             </Reorder.Group>
           </BoardNote>
         </div>
 
-        {/* 随手记 */}
         <div className="h-full">
           <BoardNote color="bg-note-blue" rotation="rotate-[1.5deg]" tapeColor="bg-sage/30">
             <h2 className="text-2xl font-black mb-4 border-b-2 border-pencil/20 pb-2 text-pencil flex items-center gap-2"><PenLine className="w-6 h-6" />随手记</h2>
@@ -177,7 +210,7 @@ export default function BoardPage() {
             </div>
             <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               <AnimatePresence>{notes.map((note) => (
-                <motion.div key={note.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.5 }} className="relative group p-3 border-l-4 border-sage/40 bg-white/30 italic font-bold text-base text-pencil/90 hover:bg-white/50 transition-all">
+                <motion.div key={note.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="relative group p-3 border-l-4 border-sage/40 bg-white/30 italic font-bold text-base text-pencil/90 hover:bg-white/50 transition-all">
                   <button onClick={() => deleteNote(note.id)} className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-pencil/20 hover:text-soft-pink transition-all"><X className="w-4 h-4" /></button>
                   <p className="pr-6">"{note.text}"</p>
                 </motion.div>
@@ -186,7 +219,6 @@ export default function BoardPage() {
           </BoardNote>
         </div>
 
-        {/* 本周计划 */}
         <div className="md:col-span-2">
           <BoardNote color="bg-note-purple" rotation="rotate-[0.5deg]" tapeColor="bg-sage/40">
             <h2 className="text-2xl font-black mb-6 flex items-center gap-2 border-b-2 border-pencil/20 pb-2 text-pencil"><Calendar className="w-6 h-6" />本周计划</h2>
@@ -195,37 +227,50 @@ export default function BoardPage() {
             </div>
             <Reorder.Group axis="y" values={weeklyTasks} onReorder={setWeeklyTasks} className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <AnimatePresence>{weeklyTasks.map((task) => (
-                <Reorder.Item key={task.id} value={task} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, x: 20 }} className="cursor-grab active:cursor-grabbing">
-                  <TodoItem task={task.text} completed={task.completed} onToggle={() => toggleTask(task.id, false)} onDelete={() => deleteWeeklyTask(task.id)} onMove={() => moveToToday(task)} moveLabel="去今日" badge={task.day} onBadgeChange={(newDay: string) => updateWeeklyDay(task.id, newDay)} daysLabels={daysLabels} />
+                <Reorder.Item key={task.id} value={task} className="cursor-grab active:cursor-grabbing">
+                  <TodoItem task={task.text} completed={task.completed} onToggle={() => toggleWeeklyTask(task)} onDelete={() => deleteWeeklyTask(task.id)} onMove={() => moveToToday(task)} moveLabel="去今日" badge={task.day} onBadgeChange={(newDay: string) => updateWeeklyDay(task.id, newDay)} daysLabels={daysLabels} />
                 </Reorder.Item>
               ))}</AnimatePresence>
             </Reorder.Group>
           </BoardNote>
         </div>
 
-        {/* Mocha 频道 */}
         <div className="h-full">
           <BoardNote color="bg-note-green" rotation="rotate-[-1deg]" tapeColor="bg-pencil/15">
-            <h2 className="text-2xl font-black mb-4 text-sage-dark flex items-center gap-2 underline decoration-pencil/10 decoration-2 underline-offset-4"><PawPrint className="w-6 h-6 animate-pulse" />Mocha 频道</h2>
-            <div className="mb-6 bg-white/40 p-3 rounded-2xl border-2 border-dashed border-pencil/10 flex flex-col items-center">
+            <h2 className="text-2xl font-black mb-2 text-sage-dark flex items-center gap-2 underline decoration-pencil/10 decoration-2 underline-offset-4"><PawPrint className="w-6 h-6 animate-pulse" />Mocha 频道</h2>
+            <div className="mb-6 bg-white/40 p-3 rounded-2xl border-2 border-dashed border-pencil/10 flex flex-col items-center text-center">
               <span className="text-xs font-black text-pencil/40 uppercase tracking-widest">已经陪伴我们</span>
               <div className="flex items-center gap-2"><span className="text-3xl font-black text-pencil">{daysWithUs}</span><span className="text-sm font-black text-pencil/60 mt-1">天</span><Heart className="w-4 h-4 text-soft-pink fill-current animate-bounce" /></div>
             </div>
+            
             <div className="space-y-5 font-black text-pencil">
-              <div className="grid grid-cols-2 gap-3">
-                <div onClick={() => nailInputRef.current?.showPicker()} className="bg-white/50 p-3 rounded-xl border-2 border-pencil/5 relative hover:bg-white/80 transition-colors cursor-pointer text-center"><span className="text-[10px] opacity-50 flex items-center justify-center gap-1 mb-1"><Scissors className="w-3 h-3"/> 剪指甲</span><span className="text-base">{getDaysAgo(mochaData.lastNails)}</span><input ref={nailInputRef} type="date" value={mochaData.lastNails} onChange={(e) => setMochaData({...mochaData, lastNails: e.target.value})} className="absolute inset-0 opacity-0 pointer-events-none" /></div>
-                <div onClick={() => bathInputRef.current?.showPicker()} className="bg-white/50 p-3 rounded-xl border-2 border-pencil/5 relative hover:bg-white/80 transition-colors cursor-pointer text-center"><span className="text-[10px] opacity-50 flex items-center justify-center gap-1 mb-1"><Waves className="w-3 h-3"/> 洗澡</span><span className="text-base">{getDaysAgo(mochaData.lastBath)}</span><input ref={bathInputRef} type="date" value={mochaData.lastBath} onChange={(e) => setMochaData({...mochaData, lastBath: e.target.value})} className="absolute inset-0 opacity-0 pointer-events-none" /></div>
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div onClick={() => nailInputRef.current?.showPicker()} className="bg-white/50 p-3 rounded-xl border-2 border-pencil/5 relative hover:bg-white/80 transition-colors cursor-pointer"><span className="text-[10px] opacity-50 flex items-center justify-center gap-1 mb-1"><Scissors className="w-3 h-3"/> 剪指甲</span><span className="text-base">{getDaysAgo(mochaData.last_nails)}</span><input ref={nailInputRef} type="date" value={mochaData.last_nails} onChange={(e) => updateMocha({last_nails: e.target.value})} className="absolute inset-0 opacity-0 pointer-events-none" /></div>
+                <div onClick={() => bathInputRef.current?.showPicker()} className="bg-white/50 p-3 rounded-xl border-2 border-pencil/5 relative hover:bg-white/80 transition-colors cursor-pointer text-center"><span className="text-[10px] opacity-50 flex items-center justify-center gap-1 mb-1"><Waves className="w-3 h-3"/> 洗澡</span><span className="text-base">{getDaysAgo(mochaData.last_bath)}</span><input ref={bathInputRef} type="date" value={mochaData.last_bath} onChange={(e) => updateMocha({last_bath: e.target.value})} className="absolute inset-0 opacity-0 pointer-events-none" /></div>
               </div>
-              <div className="bg-white/50 p-4 rounded-xl border-2 border-pencil/5 flex justify-between items-center"><span className="flex items-center gap-2 text-base"><Scale className="w-5 h-5 opacity-40" /> 体重</span><div className="flex items-center gap-1"><input type="number" step="0.1" value={mochaData.weight} onChange={(e) => setMochaData({...mochaData, weight: parseFloat(e.target.value)})} className="bg-transparent border-none outline-none text-right font-black w-12 text-xl" /><span className="text-sm opacity-60">kg</span></div></div>
+              
+              <div className="bg-white/50 p-4 rounded-xl border-2 border-pencil/5 flex justify-between items-center">
+                <span className="flex items-center gap-2 text-base"><Scale className="w-5 h-5 opacity-40" /> 体重</span>
+                <div className="flex items-center gap-1">
+                  <input type="number" step="0.1" value={mochaData.weight} onChange={(e) => updateMocha({weight: parseFloat(e.target.value)})} className="bg-transparent border-none outline-none text-right font-black w-12 text-xl" /><span className="text-sm opacity-60">kg</span>
+                </div>
+              </div>
+
               <div className="space-y-4 pt-4 border-t-2 border-dashed border-pencil/10">
                 <h3 className="text-base font-black flex items-center gap-2"><Utensils className="w-5 h-5 opacity-40" /> 今日伙食</h3>
                 <div className="bg-white/60 p-4 rounded-2xl border-2 border-pencil/5">
-                  <div className="flex justify-between items-center mb-3"><select value={mochaData.breakfast.type} onChange={(e) => setMochaData({...mochaData, breakfast: {...mochaData.breakfast, type: e.target.value}})} className="bg-transparent border-none outline-none font-black text-sm cursor-pointer"><option>早餐(鲜食)</option><option>早餐(狗粮)</option></select><span className="text-sm font-mono bg-pencil/5 px-2 py-0.5 rounded-lg">{mochaData.breakfast.grams}g</span></div>
-                  <input type="range" min="0" max="150" step="5" value={mochaData.breakfast.grams} onChange={(e) => setMochaData({...mochaData, breakfast: {...mochaData.breakfast, grams: parseInt(e.target.value)}})} className="w-full accent-sage h-2 cursor-pointer" />
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-black text-sm">早餐</span>
+                    <span className="text-sm font-mono bg-pencil/5 px-2 py-0.5 rounded-lg">{mochaData.breakfast_grams}g</span>
+                  </div>
+                  <input type="range" min="0" max="150" step="5" value={mochaData.breakfast_grams} onChange={(e) => updateMocha({breakfast_grams: parseInt(e.target.value)})} className="w-full accent-sage h-2 cursor-pointer" />
                 </div>
-                <div className={`bg-white/60 p-4 rounded-2xl border-2 border-pencil/5 ${mochaData.dinner.grams === 0 ? 'opacity-60' : ''}`}>
-                  <div className="flex justify-between items-center mb-3"><select value={mochaData.dinner.type} onChange={(e) => setMochaData({...mochaData, dinner: {...mochaData.dinner, type: e.target.value}})} className="bg-transparent border-none outline-none font-black text-sm cursor-pointer"><option>晚餐(待记录)</option><option>晚餐(鲜食)</option><option>晚餐(狗粮)</option></select><span className="text-sm font-mono bg-pencil/5 px-2 py-0.5 rounded-lg">{mochaData.dinner.grams}g</span></div>
-                  <input type="range" min="0" max="150" step="5" value={mochaData.dinner.grams} onChange={(e) => setMochaData({...mochaData, dinner: {...mochaData.dinner, grams: parseInt(e.target.value)}})} className="w-full accent-pencil/40 h-2 cursor-pointer" />
+                <div className={`bg-white/60 p-4 rounded-2xl border-2 border-pencil/5 ${mochaData.dinner_grams === 0 ? 'opacity-60' : ''}`}>
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-black text-sm">晚餐</span>
+                    <span className="text-sm font-mono bg-pencil/5 px-2 py-0.5 rounded-lg">{mochaData.dinner_grams}g</span>
+                  </div>
+                  <input type="range" min="0" max="150" step="5" value={mochaData.dinner_grams} onChange={(e) => updateMocha({dinner_grams: parseInt(e.target.value)})} className="w-full accent-pencil/40 h-2 cursor-pointer" />
                 </div>
               </div>
             </div>
@@ -258,12 +303,7 @@ function TodoItem({ task, completed, onToggle, onDelete, onMove, moveLabel, badg
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <button 
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="p-1.5 text-pencil/20 hover:text-soft-pink opacity-0 group-hover/item:opacity-100 transition-all"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1.5 text-pencil/20 hover:text-soft-pink opacity-0 group-hover/item:opacity-100 transition-all"><X className="w-4 h-4" /></button>
         {badge && (
           <div className="relative bg-pencil/10 px-1.5 py-0.5 rounded italic font-black text-[10px] cursor-pointer hover:bg-pencil/20 transition-colors">
             <select value={badge} onChange={(e) => onBadgeChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer">{daysLabels.map((day: string) => (<option key={day} value={day}>{day}</option>))}</select>{badge}
