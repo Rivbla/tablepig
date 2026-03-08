@@ -131,9 +131,18 @@ export default function BoardPage() {
   return (
     <main className="min-h-screen bg-paper p-4 md:p-10 pb-32" key="board-page">
       <header className="max-w-7xl mx-auto flex justify-between items-start mb-12">
-        <Link href="/" className="flex items-center gap-2 text-pencil opacity-70 hover:opacity-100 font-bold transition-all mt-4">
-          <ArrowLeft className="w-5 h-5" /><span>回到首页</span>
-        </Link>
+        <div className="flex items-center gap-4 mt-4">
+          <Link href="/" className="flex items-center gap-2 text-pencil opacity-70 hover:opacity-100 font-bold transition-all">
+            <ArrowLeft className="w-5 h-5" />
+            <span>回到首页</span>
+          </Link>
+          <motion.div 
+            whileHover={{ y: -10, rotate: 10 }}
+            className="cursor-help opacity-20 hover:opacity-100 transition-opacity"
+          >
+            <PawPrint className="w-5 h-5 text-soft-pink" />
+          </motion.div>
+        </div>
         <motion.div animate={{ rotate: [-1, 1, -1] }} transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }} className="bg-white px-6 py-3 hand-drawn-border hand-drawn-shadow flex flex-col items-center relative">
           <div className="tape bg-soft-pink/30 scale-75" />
           <span className="text-3xl font-black text-pencil tracking-widest font-mono">{timeString}</span>
